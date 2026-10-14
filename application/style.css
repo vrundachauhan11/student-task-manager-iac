@@ -138,6 +138,8 @@ h1 {
 
 .status-indicator.online { background: #dcfce7; color: #15803d; }
 .status-indicator.offline { background: #fee2e2; color: #b91c1c; }
+.status-indicator.demo { background: #e0e7ff; color: #4338ca; }
+
 
 /* Metrics */
 .metrics-grid {

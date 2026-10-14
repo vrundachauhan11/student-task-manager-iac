@@ -3,13 +3,68 @@
  * Connects to Cloudflare Worker REST API backed by Workers KV.
  */
 
+// Helper to detect local development hosts (e.g. localhost, 127.0.0.1, Live Server)
+function isLocalHost(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url.startsWith('http') ? url : `http://${url}`);
+    const host = parsed.hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
+  } catch {
+    return url.includes('localhost') || url.includes('127.0.0.1');
+  }
+}
+
+// Canonical task statuses
+const STATUS_PENDING = 'Pending';
+const STATUS_IN_PROGRESS = 'In Progress';
+const STATUS_COMPLETED = 'Completed';
+
+// Normalize any status string to canonical casing
+function normalizeStatus(status) {
+  const s = (status || '').trim().toLowerCase();
+  if (s === 'in progress' || s === 'inprogress' || s === 'progress') {
+    return STATUS_IN_PROGRESS;
+  }
+  if (s === 'completed' || s === 'done') {
+    return STATUS_COMPLETED;
+  }
+  return STATUS_PENDING;
+}
+
+// State transition rules:
+// Pending -> In Progress (Label: 'Start')
+// In Progress -> Completed (Label: 'Complete')
+// Completed -> Pending (Label: 'Reopen')
+function getStatusTransition(status) {
+  const current = normalizeStatus(status);
+  if (current === STATUS_PENDING) {
+    return { nextStatus: STATUS_IN_PROGRESS, label: 'Start' };
+  }
+  if (current === STATUS_IN_PROGRESS) {
+    return { nextStatus: STATUS_COMPLETED, label: 'Complete' };
+  }
+  if (current === STATUS_COMPLETED) {
+    return { nextStatus: STATUS_PENDING, label: 'Reopen' };
+  }
+  return { nextStatus: STATUS_IN_PROGRESS, label: 'Start' };
+}
+
 // State
 let tasks = [];
 let apiBaseUrl = localStorage.getItem('stm_api_url') || '';
 
+
+// Clean up any stale localhost values previously stored in localStorage
+if (isLocalHost(apiBaseUrl)) {
+  apiBaseUrl = '';
+  localStorage.removeItem('stm_api_url');
+}
+
 // DOM Elements
 const apiUrlInput = document.getElementById('apiUrlInput');
 const saveApiBtn = document.getElementById('saveApiBtn');
+const demoModeBtn = document.getElementById('demoModeBtn');
 const apiStatusBadge = document.getElementById('apiStatusBadge');
 
 const taskForm = document.getElementById('taskForm');
@@ -35,12 +90,18 @@ const metricCompleted = document.getElementById('metricCompleted');
 
 // Initialization
 document.addEventListener('DOMContentLoaded', () => {
+  // Only auto-bind origin if the application is running directly on a Cloudflare Worker / Pages domain
+  if (!apiBaseUrl && window.location.hostname) {
+    const host = window.location.hostname.toLowerCase();
+    if (host.endsWith('.workers.dev') || host.endsWith('.pages.dev')) {
+      apiBaseUrl = window.location.origin;
+    }
+  }
+
   if (apiBaseUrl) {
     apiUrlInput.value = apiBaseUrl;
-  } else if (window.location.origin && window.location.origin.startsWith('http')) {
-    // If served directly from worker domain
-    apiBaseUrl = window.location.origin;
-    apiUrlInput.value = apiBaseUrl;
+  } else {
+    apiUrlInput.value = '';
   }
 
   checkApiHealth();
@@ -48,6 +109,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event Listeners
   saveApiBtn.addEventListener('click', handleSaveApiUrl);
+  if (demoModeBtn) {
+    demoModeBtn.addEventListener('click', handleClearApiUrl);
+  }
   taskForm.addEventListener('submit', handleAddTask);
   searchInput.addEventListener('input', renderTasks);
   statusFilter.addEventListener('change', renderTasks);
@@ -57,19 +121,45 @@ document.addEventListener('DOMContentLoaded', () => {
 // Configure API endpoint
 function handleSaveApiUrl() {
   const val = apiUrlInput.value.trim().replace(/\/$/, '');
+
+  if (!val) {
+    handleClearApiUrl();
+    return;
+  }
+
+  // Prevent user from setting localhost as a Cloudflare Worker URL
+  if (isLocalHost(val)) {
+    showToast('Localhost is not a Cloudflare Worker. Switched to Local Demo Mode.', 'info');
+    handleClearApiUrl();
+    return;
+  }
+
   apiBaseUrl = val;
   localStorage.setItem('stm_api_url', apiBaseUrl);
-  showToast('API URL updated', 'success');
+  showToast('Worker API endpoint configured', 'success');
+  checkApiHealth();
+  fetchTasks();
+}
+
+// Reset to Local Demo Mode (localStorage)
+function handleClearApiUrl() {
+  apiBaseUrl = '';
+  localStorage.removeItem('stm_api_url');
+  apiUrlInput.value = '';
+  showToast('Switched to Local Demo Mode (localStorage)', 'info');
   checkApiHealth();
   fetchTasks();
 }
 
 async function checkApiHealth() {
   if (!apiBaseUrl) {
-    apiStatusBadge.textContent = 'API Not Connected (Mock Mode)';
-    apiStatusBadge.className = 'status-indicator offline';
+    apiStatusBadge.textContent = 'Local Demo Mode (localStorage)';
+    apiStatusBadge.className = 'status-indicator demo';
     return;
   }
+
+  apiStatusBadge.textContent = 'Checking Worker...';
+  apiStatusBadge.className = 'status-indicator';
 
   try {
     const res = await fetch(`${apiBaseUrl}/api/health`);
@@ -77,7 +167,7 @@ async function checkApiHealth() {
       apiStatusBadge.textContent = 'API Online (Workers KV)';
       apiStatusBadge.className = 'status-indicator online';
     } else {
-      apiStatusBadge.textContent = 'API Error';
+      apiStatusBadge.textContent = `API Error (${res.status})`;
       apiStatusBadge.className = 'status-indicator offline';
     }
   } catch (err) {
@@ -147,17 +237,17 @@ async function handleAddTask(e) {
     course: taskCourse.value.trim() || 'General',
     dueDate: taskDueDate.value || null,
     priority: taskPriority.value,
-    status: taskStatus.value,
+    status: normalizeStatus(taskStatus.value),
     description: taskDescription.value.trim(),
   };
 
   if (!apiBaseUrl) {
     // Offline / Mock Mode
-    newTask.id = `task:${Date.now()}`;
+    newTask.id = `task:mock-${Date.now()}`;
     newTask.createdAt = new Date().toISOString();
     tasks.unshift(newTask);
     localStorage.setItem('stm_mock_tasks', JSON.stringify(tasks));
-    showToast('Task added (offline mock storage)', 'success');
+    showToast('Task saved to local storage (Demo Mode)', 'success');
     taskForm.reset();
     renderTasks();
     updateMetrics();
@@ -171,7 +261,7 @@ async function handleAddTask(e) {
       body: JSON.stringify(newTask),
     });
 
-    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const created = await res.json();
     tasks.unshift(created);
@@ -181,21 +271,28 @@ async function handleAddTask(e) {
     updateMetrics();
   } catch (err) {
     console.error('Error adding task:', err);
-    showToast('Error saving task to Cloudflare Worker', 'error');
+    showToast(`Error saving task to Cloudflare Worker (${err.message})`, 'error');
   }
 }
 
 // Update Task Status
-async function updateStatus(taskId, nextStatus) {
+async function updateStatus(taskId, explicitNextStatus) {
+  const target = tasks.find(t => t.id === taskId);
+  if (!target) {
+    console.error('Task not found:', taskId);
+    return;
+  }
+
+  // Determine transition explicitly
+  const nextStatus = explicitNextStatus ? normalizeStatus(explicitNextStatus) : getStatusTransition(target.status).nextStatus;
+
   if (!apiBaseUrl) {
-    const target = tasks.find(t => t.id === taskId);
-    if (target) {
-      target.status = nextStatus;
-      localStorage.setItem('stm_mock_tasks', JSON.stringify(tasks));
-      renderTasks();
-      updateMetrics();
-      showToast(`Task marked as ${nextStatus}`, 'success');
-    }
+    target.status = nextStatus;
+    target.updatedAt = new Date().toISOString();
+    localStorage.setItem('stm_mock_tasks', JSON.stringify(tasks));
+    renderTasks();
+    updateMetrics();
+    showToast(`Task marked as ${nextStatus}`, 'success');
     return;
   }
 
@@ -206,7 +303,7 @@ async function updateStatus(taskId, nextStatus) {
       body: JSON.stringify({ status: nextStatus }),
     });
 
-    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const updated = await res.json();
     tasks = tasks.map(t => t.id === taskId ? updated : t);
@@ -215,7 +312,7 @@ async function updateStatus(taskId, nextStatus) {
     showToast(`Task marked as ${nextStatus}`, 'success');
   } catch (err) {
     console.error('Error updating task:', err);
-    showToast('Failed to update task status', 'error');
+    showToast(`Failed to update task status (${err.message})`, 'error');
   }
 }
 
@@ -228,7 +325,7 @@ async function deleteTask(taskId) {
     localStorage.setItem('stm_mock_tasks', JSON.stringify(tasks));
     renderTasks();
     updateMetrics();
-    showToast('Task removed (mock)', 'success');
+    showToast('Task removed from local storage (Demo Mode)', 'success');
     return;
   }
 
@@ -237,7 +334,7 @@ async function deleteTask(taskId) {
       method: 'DELETE',
     });
 
-    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     tasks = tasks.filter(t => t.id !== taskId);
     renderTasks();
@@ -245,7 +342,7 @@ async function deleteTask(taskId) {
     showToast('Task deleted from Workers KV', 'success');
   } catch (err) {
     console.error('Error deleting task:', err);
-    showToast('Failed to delete task', 'error');
+    showToast(`Failed to delete task (${err.message})`, 'error');
   }
 }
 
@@ -256,13 +353,15 @@ function renderTasks() {
   const selectedPriority = priorityFilter.value;
 
   const filtered = tasks.filter(t => {
+    const normStatus = normalizeStatus(t.status);
     const matchesSearch = !query || 
       t.title.toLowerCase().includes(query) || 
       (t.course && t.course.toLowerCase().includes(query)) ||
       (t.description && t.description.toLowerCase().includes(query));
 
-    const matchesStatus = selectedStatus === 'ALL' || t.status === selectedStatus;
-    const matchesPriority = selectedPriority === 'ALL' || t.priority === selectedPriority;
+    const matchesStatus = selectedStatus === 'ALL' || normStatus === selectedStatus;
+    const matchesPriority = selectedPriority === 'ALL' || 
+      (t.priority || '').trim().toLowerCase() === selectedPriority.toLowerCase();
 
     return matchesSearch && matchesStatus && matchesPriority;
   });
@@ -275,27 +374,26 @@ function renderTasks() {
 
   emptyState.style.display = 'none';
   tasksList.innerHTML = filtered.map(t => {
-    const statusClass = t.status === 'Completed' ? 'badge-status-completed' :
-                        t.status === 'In Progress' ? 'badge-status-progress' : 'badge-status-pending';
+    const currentStatus = normalizeStatus(t.status);
+    const { nextStatus, label: nextStatusLabel } = getStatusTransition(currentStatus);
 
-    const prioClass = t.priority === 'High' ? 'badge-prio-high' :
-                      t.priority === 'Medium' ? 'badge-prio-med' : 'badge-prio-low';
+    const statusClass = currentStatus === STATUS_COMPLETED ? 'badge-status-completed' :
+                        currentStatus === STATUS_IN_PROGRESS ? 'badge-status-progress' : 'badge-status-pending';
 
-    const nextStatus = t.status === 'Completed' ? 'Pending' :
-                       t.status === 'Pending' ? 'In Progress' : 'Completed';
-    const nextStatusLabel = t.status === 'Completed' ? 'Reopen' :
-                            t.status === 'Pending' ? 'Start' : 'Complete';
+    const prioNorm = (t.priority || '').trim().toLowerCase();
+    const prioClass = prioNorm === 'high' ? 'badge-prio-high' :
+                      prioNorm === 'medium' ? 'badge-prio-med' : 'badge-prio-low';
 
     return `
-      <div class="task-item" data-id="${t.id}">
+      <div class="task-item" data-id="${escapeHtml(t.id)}">
         <div class="task-top">
           <div>
             <div class="task-title">${escapeHtml(t.title)}</div>
             <small style="color: #6366f1; font-weight: 500;">${escapeHtml(t.course || 'General')}</small>
           </div>
           <div class="task-badges">
-            <span class="badge ${prioClass}">${t.priority}</span>
-            <span class="badge ${statusClass}">${t.status}</span>
+            <span class="badge ${prioClass}">${escapeHtml(t.priority || 'Medium')}</span>
+            <span class="badge ${statusClass}">${escapeHtml(currentStatus)}</span>
           </div>
         </div>
 
@@ -304,10 +402,10 @@ function renderTasks() {
         <div class="task-meta">
           <span>📅 Due: ${t.dueDate ? escapeHtml(t.dueDate) : 'No due date'}</span>
           <div class="task-actions">
-            <button class="btn-sm" onclick="updateStatus('${t.id}', '${nextStatus}')">
+            <button class="btn-sm" onclick="updateStatus('${escapeJs(t.id)}', '${nextStatus}')">
               ${nextStatusLabel}
             </button>
-            <button class="btn-sm btn-danger" onclick="deleteTask('${t.id}')">
+            <button class="btn-sm btn-danger" onclick="deleteTask('${escapeJs(t.id)}')">
               Delete
             </button>
           </div>
@@ -320,9 +418,9 @@ function renderTasks() {
 // Update Metric Counters
 function updateMetrics() {
   const total = tasks.length;
-  const pending = tasks.filter(t => t.status === 'Pending').length;
-  const progress = tasks.filter(t => t.status === 'In Progress').length;
-  const completed = tasks.filter(t => t.status === 'Completed').length;
+  const pending = tasks.filter(t => normalizeStatus(t.status) === STATUS_PENDING).length;
+  const progress = tasks.filter(t => normalizeStatus(t.status) === STATUS_IN_PROGRESS).length;
+  const completed = tasks.filter(t => normalizeStatus(t.status) === STATUS_COMPLETED).length;
 
   metricTotal.textContent = total;
   metricPending.textContent = pending;
@@ -355,4 +453,9 @@ function escapeHtml(str) {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
+}
+
+function escapeJs(str) {
+  if (!str) return '';
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
