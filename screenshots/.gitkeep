@@ -1,0 +1,10 @@
+# Screenshots Directory
+Store classroom demonstration and assignment verification screenshots in this folder:
+- 01-architecture-overview.png
+- 02-terraform-init-validate.png
+- 03-terraform-plan.png
+- 04-terraform-apply.png
+- 05-cloudflare-dashboard-kv.png
+- 06-cloudflare-dashboard-worker.png
+- 07-github-actions-pipeline.png
+- 08-application-ui-tasks.png

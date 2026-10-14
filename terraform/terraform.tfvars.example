@@ -1,0 +1,23 @@
+# ==============================================================================
+# Example Terraform Variables File
+# ==============================================================================
+# Copy this file to "terraform.tfvars" and fill in your actual Cloudflare credentials:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# WARNING: NEVER commit "terraform.tfvars" containing real API keys to Git/GitHub!
+# ==============================================================================
+
+# Cloudflare API Token created with:
+# - Account > Workers KV Storage > Edit
+# - Account > Workers Scripts > Edit
+cloudflare_api_token = "replace-with-your-cloudflare-api-token"
+
+# Cloudflare Account ID (Found in Cloudflare Dashboard URL or Overview page)
+cloudflare_account_id = "replace-with-your-cloudflare-account-id"
+
+# Optional Cloudflare Zone ID (Leave empty if using the default workers.dev domain)
+cloudflare_zone_id = ""
+
+# Resource naming configuration
+project_name = "student-task-manager"
+environment  = "dev"

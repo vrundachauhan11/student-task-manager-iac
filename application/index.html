@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Student Task Manager | Serverless IaC</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-content">
+        <div class="logo-area">
+          <div class="logo-icon">📋</div>
+          <div>
+            <h1>Student Task Manager</h1>
+            <p class="subtitle">Automated Deployment of a Serverless Application Using Terraform</p>
+          </div>
+        </div>
+        <div class="badges">
+          <span class="badge badge-infra">Terraform IaC</span>
+          <span class="badge badge-worker">Cloudflare Workers</span>
+          <span class="badge badge-kv">Workers KV</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- API Config Banner -->
+    <section class="api-config-card">
+      <div class="api-config-row">
+        <label for="apiUrlInput"><strong>Worker API Endpoint:</strong></label>
+        <input type="text" id="apiUrlInput" placeholder="https://student-task-manager-dev-worker.<your-subdomain>.workers.dev" />
+        <button id="saveApiBtn" class="btn btn-secondary">Connect API</button>
+        <span id="apiStatusBadge" class="status-indicator offline">Checking...</span>
+      </div>
+    </section>
+
+    <!-- Metrics Bar -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-value" id="metricTotal">0</div>
+        <div class="metric-label">Total Tasks</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value pending-color" id="metricPending">0</div>
+        <div class="metric-label">Pending</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value in-progress-color" id="metricInProgress">0</div>
+        <div class="metric-label">In Progress</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value completed-color" id="metricCompleted">0</div>
+        <div class="metric-label">Completed</div>
+      </div>
+    </section>
+
+    <!-- Main Content Layout -->
+    <main class="main-layout">
+      <!-- Create Task Section -->
+      <section class="card form-card">
+        <h2>Add Academic Task</h2>
+        <form id="taskForm">
+          <div class="form-group">
+            <label for="taskTitle">Task Title *</label>
+            <input type="text" id="taskTitle" placeholder="e.g. Cloud Computing Lab 3: Terraform" required />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="taskCourse">Course / Subject</label>
+              <input type="text" id="taskCourse" placeholder="e.g. CS-450 Cloud Infra" />
+            </div>
+            <div class="form-group">
+              <label for="taskDueDate">Due Date</label>
+              <input type="date" id="taskDueDate" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="taskPriority">Priority</label>
+              <select id="taskPriority">
+                <option value="Low">Low</option>
+                <option value="Medium" selected>Medium</option>
+                <option value="High">High</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="taskStatus">Initial Status</label>
+              <select id="taskStatus">
+                <option value="Pending" selected>Pending</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Completed">Completed</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="taskDescription">Notes & Description</label>
+            <textarea id="taskDescription" rows="3" placeholder="Submission guidelines, rubrics, team notes..."></textarea>
+          </div>
+
+          <button type="submit" id="submitTaskBtn" class="btn btn-primary">
+            <span>+ Add Task</span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Task List Section -->
+      <section class="card tasks-card">
+        <div class="tasks-header">
+          <h2>Task Tracker</h2>
+          <div class="filters-row">
+            <input type="search" id="searchInput" placeholder="Search title or course..." />
+            <select id="statusFilter">
+              <option value="ALL">All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Completed">Completed</option>
+            </select>
+            <select id="priorityFilter">
+              <option value="ALL">All Priorities</option>
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="loadingIndicator" class="loading-state" style="display: none;">
+          <div class="spinner"></div>
+          <p>Syncing tasks with Workers KV...</p>
+        </div>
+
+        <div id="emptyState" class="empty-state">
+          <div class="empty-icon">📂</div>
+          <h3>No tasks found</h3>
+          <p>Add a task using the form on the left or adjust your search filter.</p>
+        </div>
+
+        <div id="tasksList" class="tasks-list">
+          <!-- Dynamically populated task cards -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Cloud Computing Classroom Assignment &bull; Provisioned via Terraform &bull; Cloudflare Workers &amp; KV</p>
+    </footer>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+  <script src="script.js"></script>
+</body>
+</html>
